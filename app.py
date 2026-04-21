@@ -12,7 +12,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
 
 st.title("策略選股（全台股）")
-st.write("條件：股價在25日均線上 + 5日均量線黃金交叉60日均量線 + 成交量大於5000")
+st.write("條件：股價在25日均線上 + 5日均量線黃金交叉60日均量線 + 成交量大於5000張")
 
 
 # =========================
@@ -31,7 +31,7 @@ def _fetch_isin_table(str_mode: int) -> pd.DataFrame:
 
     df = tables[0].copy()
 
-    # 有些頁面第一列其實是表頭內容
+    # 有些頁面第一列是表頭
     if len(df) > 0:
         first_row = df.iloc[0].astype(str).tolist()
         if any("代號" in x for x in first_row):
@@ -46,17 +46,14 @@ def _extract_codes(df: pd.DataFrame, suffix: str) -> list[str]:
     if df.empty:
         return []
 
-    # 找出最可能是「代號及名稱」的欄位
     first_col = df.columns[0]
-
-    # 從第一欄抓出四碼股票代號
     codes = []
+
     for val in df[first_col].astype(str):
         m = re.match(r"^(\d{4})", val.strip())
         if m:
             codes.append(f"{m.group(1)}{suffix}")
 
-    # 去重複
     return sorted(list(set(codes)))
 
 
@@ -112,17 +109,24 @@ def check_stock(df: pd.DataFrame):
 
     df = df.copy()
     df["MA25"] = df["Close"].rolling(25).mean()
-    df["VMA5"] = df["Volume"].rolling(5).mean()
-    df["VMA60"] = df["Volume"].rolling(60).mean()
+
+    # 台股成交量改成「張」
+    df["Volume張"] = df["Volume"] / 1000
+
+    # 均量也用「張」計算
+    df["VMA5"] = df["Volume張"].rolling(5).mean()
+    df["VMA60"] = df["Volume張"].rolling(60).mean()
 
     prev = df.iloc[-2]
     last = df.iloc[-1]
 
+    # 1. 股價在25日均線上
     cond_price_above = (
         pd.notna(last["MA25"]) and
         last["Close"] > last["MA25"]
     )
 
+    # 2. 5日均量線今天上穿60日均量線，且昨天還在下方
     cond_volume_cross = (
         pd.notna(prev["VMA5"]) and pd.notna(prev["VMA60"]) and
         pd.notna(last["VMA5"]) and pd.notna(last["VMA60"]) and
@@ -130,16 +134,20 @@ def check_stock(df: pd.DataFrame):
         last["VMA5"] > last["VMA60"]
     )
 
-    cond_liquidity = pd.notna(last["Volume"]) and last["Volume"] > 5000
+    # 3. 成交量大於5000張
+    cond_liquidity = (
+        pd.notna(last["Volume張"]) and
+        last["Volume張"] > 5000
+    )
 
     if cond_price_above and cond_volume_cross and cond_liquidity:
         return {
             "股票": "",
             "收盤價": round(float(last["Close"]), 2),
             "25日均線": round(float(last["MA25"]), 2),
-            "成交量": int(last["Volume"]),
-            "5日均量": int(last["VMA5"]),
-            "60日均量": int(last["VMA60"]),
+            "成交量(張)": int(last["Volume張"]),
+            "5日均量(張)": int(last["VMA5"]),
+            "60日均量(張)": int(last["VMA60"]),
         }
 
     return None
@@ -198,11 +206,21 @@ if st.button("開始選股"):
 
     if results:
         df_result = pd.DataFrame(results)
-        df_result = df_result[["股票", "收盤價", "25日均線", "成交量", "5日均量", "60日均量"]]
-        df_result = df_result.sort_values(by="成交量", ascending=False).reset_index(drop=True)
+        df_result = df_result[
+            ["股票", "收盤價", "25日均線", "成交量(張)", "5日均量(張)", "60日均量(張)"]
+        ]
+        df_result = df_result.sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
 
         st.success(f"找到 {len(df_result)} 檔符合條件的股票")
         st.dataframe(df_result, use_container_width=True, hide_index=True)
+
+        csv = df_result.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            label="下載選股結果 CSV",
+            data=csv,
+            file_name="策略選股結果.csv",
+            mime="text/csv"
+        )
     else:
         st.warning("今天沒有符合條件的股票")
 else:
