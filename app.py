@@ -54,7 +54,8 @@ def check_stock(df):
     )
 
     # 過濾太小成交量
-    cond_liquidity = last["Volume"] > 1000000
+    cond_liquidity = last["Volume"] > 5000
+    
 
     if cond_price_above and cond_volume_cross and cond_liquidity:
         return {
