@@ -68,7 +68,8 @@ def _extract_codes_with_filter(df: pd.DataFrame, suffix: str) -> list[str]:
             if (
                 "生技" in industry or
                 "醫療" in industry or
-                "營建" in industry or
+                "建材營造" in industry or
+                "食品" in industry or
                 "ETF" in industry or
                 "金融" in industry or
                 "保險" in industry or
