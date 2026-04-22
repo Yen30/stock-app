@@ -12,7 +12,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
 
 st.title("策略選股（全台股）")
-st.write("條件：44日線上 + 5日均量金叉60日均量 + 成交量>5000張")
+st.write("條件：44日線上 + 5日均量金叉120日均量 + 成交量>5000張")
 
 # =========================
 # 抓台股清單
@@ -79,7 +79,7 @@ def get_data(ticker):
     try:
         df = yf.download(
             ticker,
-            period="8mo",
+            period="1y",
             progress=False,
             auto_adjust=False,
             threads=False
@@ -93,7 +93,7 @@ def get_data(ticker):
 
         df.columns = [str(c).title() for c in df.columns]
         return df
-    except:
+    except Exception:
         return None
 
 
@@ -101,30 +101,45 @@ def get_data(ticker):
 # 條件判斷
 # =========================
 def check_stock(df):
-    if df is None or len(df) < 70:
+    if df is None or len(df) < 130:
         return None
 
     df = df.copy()
 
-    # 🔥 改這裡：44MA
+    # 價格均線
     df["MA44"] = df["Close"].rolling(44).mean()
 
+    # 台股成交量換算成張
     df["Volume張"] = df["Volume"] / 1000
+
+    # 均量
     df["VMA5"] = df["Volume張"].rolling(5).mean()
-    df["VMA60"] = df["Volume張"].rolling(60).mean()
+    df["VMA120"] = df["Volume張"].rolling(120).mean()
 
     prev = df.iloc[-2]
     last = df.iloc[-1]
 
-    # 條件
-    cond_price = last["Close"] > last["MA44"]
-
-    cond_volume_cross = (
-        prev["VMA5"] < prev["VMA60"] and
-        last["VMA5"] > last["VMA60"]
+    # 條件1：股價在44日均線上
+    cond_price = (
+        pd.notna(last["MA44"]) and
+        last["Close"] > last["MA44"]
     )
 
-    cond_liquidity = last["Volume張"] > 5000
+    # 條件2：5日均量金叉120日均量
+    cond_volume_cross = (
+        pd.notna(prev["VMA5"]) and
+        pd.notna(prev["VMA120"]) and
+        pd.notna(last["VMA5"]) and
+        pd.notna(last["VMA120"]) and
+        prev["VMA5"] < prev["VMA120"] and
+        last["VMA5"] > last["VMA120"]
+    )
+
+    # 條件3：成交量大於5000張
+    cond_liquidity = (
+        pd.notna(last["Volume張"]) and
+        last["Volume張"] > 5000
+    )
 
     if cond_price and cond_volume_cross and cond_liquidity:
         return {
@@ -132,6 +147,8 @@ def check_stock(df):
             "收盤價": round(float(last["Close"]), 2),
             "44日線": round(float(last["MA44"]), 2),
             "成交量(張)": int(last["Volume張"]),
+            "5日均量(張)": int(last["VMA5"]),
+            "120日均量(張)": int(last["VMA120"]),
         }
 
     return None
@@ -160,7 +177,7 @@ else:
 if st.button("開始選股"):
     tickers = get_all_tickers()
 
-    if limit:
+    if limit is not None:
         tickers = tickers[:limit]
 
     st.write(f"掃描 {len(tickers)} 檔股票")
@@ -180,7 +197,7 @@ if st.button("開始選股"):
 
     if results:
         df_result = pd.DataFrame(results)
-        df_result = df_result.sort_values(by="成交量(張)", ascending=False)
+        df_result = df_result.sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
         st.success(f"找到 {len(df_result)} 檔")
         st.dataframe(df_result, use_container_width=True, hide_index=True)
     else:
