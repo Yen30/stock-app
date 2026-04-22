@@ -12,7 +12,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
 
 st.title("策略選股（全台股）")
-st.write("條件：44MA上揚 + 5日均量>120日均量 + 成交量>5000張 + 創20日新高")
+st.write("條件：44MA上揚 + 5日均量>120日均量 + 成交量>5000張 + 創20日新高 + 不追高")
 
 
 # =========================
@@ -107,14 +107,14 @@ def check_stock(df):
 
     df = df.copy()
 
-    # 價格均線
+    # 均線
     df["MA44"] = df["Close"].rolling(44).mean()
     df["MA44_prev"] = df["MA44"].shift(1)
 
-    # 成交量轉張
-    df["Volume張"] = df["Volume"] / 1000
+    df["MA25"] = df["Close"].rolling(25).mean()
 
-    # 均量
+    # 成交量
+    df["Volume張"] = df["Volume"] / 1000
     df["VMA5"] = df["Volume張"].rolling(5).mean()
     df["VMA120"] = df["Volume張"].rolling(120).mean()
 
@@ -127,11 +127,16 @@ def check_stock(df):
     cond_liquidity = last["Volume張"] > 5000
     cond_break = last["Close"] >= df["Close"].rolling(20).max().iloc[-1]
 
-    if cond_price and cond_ma_up and cond_volume and cond_liquidity and cond_break:
+    # 🔥 不追高條件
+    cond_not_too_far = last["Close"] / last["MA25"] < 1.2
+
+    if cond_price and cond_ma_up and cond_volume and cond_liquidity and cond_break and cond_not_too_far:
         return {
             "股票": "",
             "收盤價": round(float(last["Close"]), 2),
             "44日線": round(float(last["MA44"]), 2),
+            "25日線": round(float(last["MA25"]), 2),
+            "乖離": round(float(last["Close"] / last["MA25"]), 2),
             "成交量(張)": int(last["Volume張"]),
         }
 
@@ -139,7 +144,7 @@ def check_stock(df):
 
 
 # =========================
-# 主程式（掃全部）
+# 主程式
 # =========================
 if st.button("開始選股"):
     tickers = get_all_tickers()
