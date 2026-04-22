@@ -12,7 +12,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
 
 st.title("策略選股（全台股）")
-st.write("條件：44日線上 + 5日均量金叉120日均量 + 成交量>5000張")
+st.write("條件：44MA上揚 + 5日均量>120日均量 + 成交量>5000張 + 創20日新高")
+
 
 # =========================
 # 抓台股清單
@@ -108,77 +109,40 @@ def check_stock(df):
 
     # 價格均線
     df["MA44"] = df["Close"].rolling(44).mean()
+    df["MA44_prev"] = df["MA44"].shift(1)
 
-    # 台股成交量換算成張
+    # 成交量轉張
     df["Volume張"] = df["Volume"] / 1000
 
     # 均量
     df["VMA5"] = df["Volume張"].rolling(5).mean()
     df["VMA120"] = df["Volume張"].rolling(120).mean()
 
-    prev = df.iloc[-2]
     last = df.iloc[-1]
 
-    # 條件1：股價在44日均線上
-    cond_price = (
-        pd.notna(last["MA44"]) and
-        last["Close"] > last["MA44"]
-    )
+    # 條件
+    cond_price = last["Close"] > last["MA44"]
+    cond_ma_up = last["MA44"] > last["MA44_prev"]
+    cond_volume = last["VMA5"] > last["VMA120"]
+    cond_liquidity = last["Volume張"] > 5000
+    cond_break = last["Close"] >= df["Close"].rolling(20).max().iloc[-1]
 
-    # 條件2：5日均量金叉120日均量
-    cond_volume_cross = (
-        pd.notna(prev["VMA5"]) and
-        pd.notna(prev["VMA120"]) and
-        pd.notna(last["VMA5"]) and
-        pd.notna(last["VMA120"]) and
-        prev["VMA5"] < prev["VMA120"] and
-        last["VMA5"] > last["VMA120"]
-    )
-
-    # 條件3：成交量大於5000張
-    cond_liquidity = (
-        pd.notna(last["Volume張"]) and
-        last["Volume張"] > 5000
-    )
-
-    if cond_price and cond_volume_cross and cond_liquidity:
+    if cond_price and cond_ma_up and cond_volume and cond_liquidity and cond_break:
         return {
             "股票": "",
             "收盤價": round(float(last["Close"]), 2),
             "44日線": round(float(last["MA44"]), 2),
             "成交量(張)": int(last["Volume張"]),
-            "5日均量(張)": int(last["VMA5"]),
-            "120日均量(張)": int(last["VMA120"]),
         }
 
     return None
 
 
 # =========================
-# UI
-# =========================
-scan_mode = st.selectbox(
-    "掃描範圍",
-    ["先掃 100 檔（最快）", "掃 300 檔", "全部台股（較慢）"],
-    index=0
-)
-
-if scan_mode == "先掃 100 檔（最快）":
-    limit = 100
-elif scan_mode == "掃 300 檔":
-    limit = 300
-else:
-    limit = None
-
-
-# =========================
-# 主程式
+# 主程式（掃全部）
 # =========================
 if st.button("開始選股"):
     tickers = get_all_tickers()
-
-    if limit is not None:
-        tickers = tickers[:limit]
 
     st.write(f"掃描 {len(tickers)} 檔股票")
 
@@ -198,6 +162,7 @@ if st.button("開始選股"):
     if results:
         df_result = pd.DataFrame(results)
         df_result = df_result.sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
+
         st.success(f"找到 {len(df_result)} 檔")
         st.dataframe(df_result, use_container_width=True, hide_index=True)
     else:
