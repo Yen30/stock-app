@@ -12,11 +12,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
 
 st.title("策略選股（全台股）")
-st.write("條件：多頭排列 + 強勢突破 + 量能 + 不追高")
+st.write("條件：多頭排列 + 強勢突破 + 量能 + 不追高（已排除特定產業）")
 
 
 # =========================
-# 抓台股清單
+# 抓台股清單（含產業過濾）
 # =========================
 def _fetch_isin_table(str_mode: int) -> pd.DataFrame:
     url = f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={str_mode}"
@@ -41,17 +41,43 @@ def _fetch_isin_table(str_mode: int) -> pd.DataFrame:
     return df
 
 
-def _extract_codes(df: pd.DataFrame, suffix: str) -> list[str]:
+def _extract_codes_with_filter(df: pd.DataFrame, suffix: str) -> list[str]:
     if df.empty:
         return []
 
     first_col = df.columns[0]
+
+    industry_col = None
+    for col in df.columns:
+        if "產業" in col:
+            industry_col = col
+            break
+
     codes = []
 
-    for val in df[first_col].astype(str):
+    for i, val in enumerate(df[first_col].astype(str)):
         m = re.match(r"^(\d{4})", val.strip())
-        if m:
-            codes.append(f"{m.group(1)}{suffix}")
+        if not m:
+            continue
+
+        code = m.group(1)
+
+        if industry_col:
+            industry = str(df.iloc[i][industry_col])
+
+            if (
+                "生技" in industry or
+                "醫療" in industry or
+                "營建" in industry or
+                "ETF" in industry or
+                "金融" in industry or
+                "保險" in industry or
+                "觀光" in industry or
+                "餐飲" in industry
+            ):
+                continue
+
+        codes.append(f"{code}{suffix}")
 
     return sorted(list(set(codes)))
 
@@ -59,13 +85,13 @@ def _extract_codes(df: pd.DataFrame, suffix: str) -> list[str]:
 @st.cache_data(ttl=3600)
 def get_twse_tickers():
     df = _fetch_isin_table(2)
-    return _extract_codes(df, ".TW")
+    return _extract_codes_with_filter(df, ".TW")
 
 
 @st.cache_data(ttl=3600)
 def get_tpex_tickers():
     df = _fetch_isin_table(4)
-    return _extract_codes(df, ".TWO")
+    return _extract_codes_with_filter(df, ".TWO")
 
 
 @st.cache_data(ttl=3600)
@@ -107,37 +133,22 @@ def check_stock(df):
 
     df = df.copy()
 
-    # 均線
     df["MA25"] = df["Close"].rolling(25).mean()
     df["MA44"] = df["Close"].rolling(44).mean()
     df["MA44_prev"] = df["MA44"].shift(1)
 
-    # 成交量
     df["Volume張"] = df["Volume"] / 1000
     df["VMA5"] = df["Volume張"].rolling(5).mean()
     df["VMA120"] = df["Volume張"].rolling(120).mean()
 
     last = df.iloc[-1]
 
-    # 條件1：站上44MA
     cond_price = last["Close"] > last["MA44"]
-
-    # 條件2：44MA上揚
     cond_ma_up = last["MA44"] > last["MA44_prev"]
-
-    # 條件3：多頭排列（25MA > 44MA）
     cond_ma_structure = last["MA25"] > last["MA44"]
-
-    # 條件4：量能
     cond_volume = last["VMA5"] > last["VMA120"]
-
-    # 條件5：成交量
     cond_liquidity = last["Volume張"] > 5000
-
-    # 條件6：強勢突破（20日高 + 2%）
     cond_break = last["Close"] >= df["Close"].rolling(20).max().iloc[-2] * 1.02
-
-    # 條件7：不追高
     cond_not_too_far = last["Close"] / last["MA25"] < 1.2
 
     if (
@@ -167,7 +178,7 @@ def check_stock(df):
 if st.button("開始選股"):
     tickers = get_all_tickers()
 
-    st.write(f"掃描 {len(tickers)} 檔股票")
+    st.write(f"掃描 {len(tickers)} 檔股票（已排除特定產業）")
 
     progress = st.progress(0)
     results = []
