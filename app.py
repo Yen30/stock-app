@@ -12,8 +12,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
 
 st.title("策略選股（全台股）")
-st.write("條件：股價在25日均線上 + 5日均量線黃金交叉60日均量線 + 成交量大於5000張")
-
+st.write("條件：25日線上 + 5日均量金叉60日均量 + 成交量>5000張 + 站上25週線")
 
 # =========================
 # 抓台股清單
@@ -31,7 +30,6 @@ def _fetch_isin_table(str_mode: int) -> pd.DataFrame:
 
     df = tables[0].copy()
 
-    # 有些頁面第一列是表頭
     if len(df) > 0:
         first_row = df.iloc[0].astype(str).tolist()
         if any("代號" in x for x in first_row):
@@ -58,31 +56,30 @@ def _extract_codes(df: pd.DataFrame, suffix: str) -> list[str]:
 
 
 @st.cache_data(ttl=3600)
-def get_twse_tickers() -> list[str]:
-    df = _fetch_isin_table(2)   # 上市
+def get_twse_tickers():
+    df = _fetch_isin_table(2)
     return _extract_codes(df, ".TW")
 
 
 @st.cache_data(ttl=3600)
-def get_tpex_tickers() -> list[str]:
-    df = _fetch_isin_table(4)   # 上櫃
+def get_tpex_tickers():
+    df = _fetch_isin_table(4)
     return _extract_codes(df, ".TWO")
 
 
 @st.cache_data(ttl=3600)
-def get_all_tickers() -> list[str]:
-    tickers = get_twse_tickers() + get_tpex_tickers()
-    return sorted(list(set(tickers)))
+def get_all_tickers():
+    return sorted(list(set(get_twse_tickers() + get_tpex_tickers())))
 
 
 # =========================
 # 抓股價資料
 # =========================
-def get_data(ticker: str):
+def get_data(ticker):
     try:
         df = yf.download(
             ticker,
-            period="8mo",
+            period="1y",  # 要抓夠週線
             progress=False,
             auto_adjust=False,
             threads=False
@@ -96,58 +93,59 @@ def get_data(ticker: str):
 
         df.columns = [str(c).title() for c in df.columns]
         return df
-    except Exception:
+    except:
         return None
 
 
 # =========================
 # 條件判斷
 # =========================
-def check_stock(df: pd.DataFrame):
-    if df is None or len(df) < 70:
+def check_stock(df):
+    if df is None or len(df) < 150:
         return None
 
     df = df.copy()
+
+    # 日線
     df["MA25"] = df["Close"].rolling(25).mean()
-
-    # 台股成交量改成「張」
     df["Volume張"] = df["Volume"] / 1000
-
-    # 均量也用「張」計算
     df["VMA5"] = df["Volume張"].rolling(5).mean()
     df["VMA60"] = df["Volume張"].rolling(60).mean()
 
     prev = df.iloc[-2]
     last = df.iloc[-1]
 
-    # 1. 股價在25日均線上
-    cond_price_above = (
-        pd.notna(last["MA25"]) and
-        last["Close"] > last["MA25"]
-    )
+    # 週線
+    df_week = df.resample("W").agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum"
+    })
 
-    # 2. 5日均量線今天上穿60日均量線，且昨天還在下方
+    df_week["MA25W"] = df_week["Close"].rolling(25).mean()
+    last_week = df_week.iloc[-1]
+
+    # 條件
+    cond_price = last["Close"] > last["MA25"]
+
     cond_volume_cross = (
-        pd.notna(prev["VMA5"]) and pd.notna(prev["VMA60"]) and
-        pd.notna(last["VMA5"]) and pd.notna(last["VMA60"]) and
         prev["VMA5"] < prev["VMA60"] and
         last["VMA5"] > last["VMA60"]
     )
 
-    # 3. 成交量大於5000張
-    cond_liquidity = (
-        pd.notna(last["Volume張"]) and
-        last["Volume張"] > 5000
-    )
+    cond_liquidity = last["Volume張"] > 5000
 
-    if cond_price_above and cond_volume_cross and cond_liquidity:
+    cond_week = last["Close"] > last_week["MA25W"]
+
+    if cond_price and cond_volume_cross and cond_liquidity and cond_week:
         return {
             "股票": "",
             "收盤價": round(float(last["Close"]), 2),
-            "25日均線": round(float(last["MA25"]), 2),
+            "25日線": round(float(last["MA25"]), 2),
+            "25週線": round(float(last_week["MA25W"]), 2),
             "成交量(張)": int(last["Volume張"]),
-            "5日均量(張)": int(last["VMA5"]),
-            "60日均量(張)": int(last["VMA60"]),
         }
 
     return None
@@ -170,57 +168,35 @@ else:
     limit = None
 
 
+# =========================
+# 主程式
+# =========================
 if st.button("開始選股"):
-    try:
-        tickers = get_all_tickers()
-    except Exception as e:
-        st.error(f"取得台股清單失敗：{e}")
-        st.stop()
+    tickers = get_all_tickers()
 
-    if not tickers:
-        st.error("抓不到台股清單，請稍後再試。")
-        st.stop()
-
-    if limit is not None:
+    if limit:
         tickers = tickers[:limit]
 
-    st.write(f"本次掃描：{len(tickers)} 檔")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    st.write(f"掃描 {len(tickers)} 檔股票")
 
+    progress = st.progress(0)
     results = []
 
-    for i, ticker in enumerate(tickers):
-        status_text.text(f"掃描中：{ticker} ({i+1}/{len(tickers)})")
+    for i, t in enumerate(tickers):
+        df = get_data(t)
+        r = check_stock(df)
 
-        df = get_data(ticker)
-        result = check_stock(df)
+        if r:
+            r["股票"] = t.replace(".TW", "").replace(".TWO", "")
+            results.append(r)
 
-        if result:
-            result["股票"] = ticker.replace(".TW", "").replace(".TWO", "")
-            results.append(result)
-
-        progress_bar.progress((i + 1) / len(tickers))
-
-    status_text.text("掃描完成")
+        progress.progress((i + 1) / len(tickers))
 
     if results:
         df_result = pd.DataFrame(results)
-        df_result = df_result[
-            ["股票", "收盤價", "25日均線", "成交量(張)", "5日均量(張)", "60日均量(張)"]
-        ]
-        df_result = df_result.sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
-
-        st.success(f"找到 {len(df_result)} 檔符合條件的股票")
+        df_result = df_result.sort_values(by="成交量(張)", ascending=False)
+        st.success(f"找到 {len(df_result)} 檔")
         st.dataframe(df_result, use_container_width=True, hide_index=True)
-
-        csv = df_result.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            label="下載選股結果 CSV",
-            data=csv,
-            file_name="策略選股結果.csv",
-            mime="text/csv"
-        )
     else:
         st.warning("今天沒有符合條件的股票")
 else:
