@@ -12,7 +12,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
 
 st.title("策略選股（全台股）")
-st.write("條件：44MA上揚 + 5日均量>120日均量 + 成交量>5000張 + 創20日新高 + 不追高")
+st.write("條件：多頭排列 + 強勢突破 + 量能 + 不追高")
 
 
 # =========================
@@ -108,10 +108,9 @@ def check_stock(df):
     df = df.copy()
 
     # 均線
+    df["MA25"] = df["Close"].rolling(25).mean()
     df["MA44"] = df["Close"].rolling(44).mean()
     df["MA44_prev"] = df["MA44"].shift(1)
-
-    df["MA25"] = df["Close"].rolling(25).mean()
 
     # 成交量
     df["Volume張"] = df["Volume"] / 1000
@@ -120,22 +119,41 @@ def check_stock(df):
 
     last = df.iloc[-1]
 
-    # 條件
+    # 條件1：站上44MA
     cond_price = last["Close"] > last["MA44"]
-    cond_ma_up = last["MA44"] > last["MA44_prev"]
-    cond_volume = last["VMA5"] > last["VMA120"]
-    cond_liquidity = last["Volume張"] > 5000
-    cond_break = last["Close"] >= df["Close"].rolling(20).max().iloc[-1]
 
-    # 🔥 不追高條件
+    # 條件2：44MA上揚
+    cond_ma_up = last["MA44"] > last["MA44_prev"]
+
+    # 條件3：多頭排列（25MA > 44MA）
+    cond_ma_structure = last["MA25"] > last["MA44"]
+
+    # 條件4：量能
+    cond_volume = last["VMA5"] > last["VMA120"]
+
+    # 條件5：成交量
+    cond_liquidity = last["Volume張"] > 5000
+
+    # 條件6：強勢突破（20日高 + 2%）
+    cond_break = last["Close"] >= df["Close"].rolling(20).max().iloc[-2] * 1.02
+
+    # 條件7：不追高
     cond_not_too_far = last["Close"] / last["MA25"] < 1.2
 
-    if cond_price and cond_ma_up and cond_volume and cond_liquidity and cond_break and cond_not_too_far:
+    if (
+        cond_price and
+        cond_ma_up and
+        cond_ma_structure and
+        cond_volume and
+        cond_liquidity and
+        cond_break and
+        cond_not_too_far
+    ):
         return {
             "股票": "",
             "收盤價": round(float(last["Close"]), 2),
-            "44日線": round(float(last["MA44"]), 2),
             "25日線": round(float(last["MA25"]), 2),
+            "44日線": round(float(last["MA44"]), 2),
             "乖離": round(float(last["Close"] / last["MA25"]), 2),
             "成交量(張)": int(last["Volume張"]),
         }
