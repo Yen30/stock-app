@@ -12,8 +12,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
 
 st.title("策略選股（全台股）")
-st.write("條件：多頭排列 + 強勢突破 + 量能 + 不追高（已排除特定產業）")
 
+strategy = st.selectbox(
+    "選擇策略",
+    ["策略1：突破股", "策略2：44MA + MACD轉多"]
+)
 
 # =========================
 # 抓台股清單（含產業過濾）
@@ -126,9 +129,9 @@ def get_data(ticker):
 
 
 # =========================
-# 條件判斷
+# 策略1：突破股
 # =========================
-def check_stock(df):
+def check_strategy1(df):
     if df is None or len(df) < 130:
         return None
 
@@ -174,6 +177,65 @@ def check_stock(df):
 
 
 # =========================
+# 策略2：44MA + MACD轉多
+# =========================
+def check_strategy2(df):
+    if df is None or len(df) < 100:
+        return None
+
+    df = df.copy()
+
+    df["MA44"] = df["Close"].rolling(44).mean()
+
+    df["EMA12"] = df["Close"].ewm(span=12, adjust=False).mean()
+    df["EMA26"] = df["Close"].ewm(span=26, adjust=False).mean()
+    df["DIF"] = df["EMA12"] - df["EMA26"]
+    df["DEA"] = df["DIF"].ewm(span=9, adjust=False).mean()
+    df["MACD"] = df["DIF"] - df["DEA"]
+
+    df["Volume張"] = df["Volume"] / 1000
+
+    prev = df.iloc[-2]
+    last = df.iloc[-1]
+
+    # 1. 股價剛上穿44MA
+    cond_cross_44ma = (
+        pd.notna(prev["MA44"]) and
+        pd.notna(last["MA44"]) and
+        prev["Close"] < prev["MA44"] and
+        last["Close"] > last["MA44"]
+    )
+
+    # 2. MACD翻紅
+    cond_macd_red = (
+        pd.notna(prev["MACD"]) and
+        pd.notna(last["MACD"]) and
+        prev["MACD"] < 0 and
+        last["MACD"] > 0
+    )
+
+    # 3. DIF前一日為負，今日大於0
+    cond_dif_cross_zero = (
+        pd.notna(prev["DIF"]) and
+        pd.notna(last["DIF"]) and
+        prev["DIF"] < 0 and
+        last["DIF"] > 0
+    )
+
+    if cond_cross_44ma and cond_macd_red and cond_dif_cross_zero:
+        return {
+            "股票": "",
+            "收盤價": round(float(last["Close"]), 2),
+            "44日線": round(float(last["MA44"]), 2),
+            "DIF": round(float(last["DIF"]), 2),
+            "MACD": round(float(last["MACD"]), 2),
+            "成交量(張)": int(last["Volume張"]),
+        }
+
+    return None
+
+
+# =========================
 # 主程式
 # =========================
 if st.button("開始選股"):
@@ -184,23 +246,31 @@ if st.button("開始選股"):
     progress = st.progress(0)
     results = []
 
-    for i, t in enumerate(tickers):
-        df = get_data(t)
-        r = check_stock(df)
+    for i, ticker in enumerate(tickers):
+        df = get_data(ticker)
 
-        if r:
-            r["股票"] = t.replace(".TW", "").replace(".TWO", "")
-            results.append(r)
+        if strategy == "策略1：突破股":
+            result = check_strategy1(df)
+        else:
+            result = check_strategy2(df)
+
+        if result:
+            result["股票"] = ticker.replace(".TW", "").replace(".TWO", "")
+            results.append(result)
 
         progress.progress((i + 1) / len(tickers))
 
     if results:
         df_result = pd.DataFrame(results)
-        df_result = df_result.sort_values(by="成交量(張)", ascending=False).reset_index(drop=True)
+
+        if "成交量(張)" in df_result.columns:
+            df_result = df_result.sort_values(by="成交量(張)", ascending=False)
+
+        df_result = df_result.reset_index(drop=True)
 
         st.success(f"找到 {len(df_result)} 檔")
         st.dataframe(df_result, use_container_width=True, hide_index=True)
     else:
         st.warning("今天沒有符合條件的股票")
 else:
-    st.info("按下『開始選股』後開始掃描。")
+    st.info("選好策略後，按下『開始選股』。")
