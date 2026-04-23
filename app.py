@@ -87,24 +87,17 @@ def _extract_codes_with_filter(df: pd.DataFrame, suffix: str) -> list[str]:
 
 
 @st.cache_data(ttl=3600)
-def get_twse_tickers():
-    df = _fetch_isin_table(2)
-    return _extract_codes_with_filter(df, ".TW")
-
-
-@st.cache_data(ttl=3600)
-def get_tpex_tickers():
-    df = _fetch_isin_table(4)
-    return _extract_codes_with_filter(df, ".TWO")
-
-
-@st.cache_data(ttl=3600)
 def get_all_tickers():
-    return sorted(list(set(get_twse_tickers() + get_tpex_tickers())))
+    df1 = _fetch_isin_table(2)
+    df2 = _fetch_isin_table(4)
+    return sorted(list(set(
+        _extract_codes_with_filter(df1, ".TW") +
+        _extract_codes_with_filter(df2, ".TWO")
+    )))
 
 
 # =========================
-# 抓股價資料
+# 抓資料
 # =========================
 def get_data(ticker):
     try:
@@ -124,7 +117,7 @@ def get_data(ticker):
 
         df.columns = [str(c).title() for c in df.columns]
         return df
-    except Exception:
+    except:
         return None
 
 
@@ -177,7 +170,7 @@ def check_strategy1(df):
 
 
 # =========================
-# 策略2：44MA + MACD轉多
+# 策略2：44MA + MACD轉多（新版）
 # =========================
 def check_strategy2(df):
     if df is None or len(df) < 100:
@@ -198,31 +191,22 @@ def check_strategy2(df):
     prev = df.iloc[-2]
     last = df.iloc[-1]
 
-    # 1. 股價剛上穿44MA
     cond_cross_44ma = (
-        pd.notna(prev["MA44"]) and
-        pd.notna(last["MA44"]) and
         prev["Close"] < prev["MA44"] and
         last["Close"] > last["MA44"]
     )
 
-    # 2. MACD翻紅
     cond_macd_red = (
-        pd.notna(prev["MACD"]) and
-        pd.notna(last["MACD"]) and
         prev["MACD"] < 0 and
         last["MACD"] > 0
     )
 
-    # 3. DIF前一日為負，今日大於0
-    cond_dif_cross_zero = (
-        pd.notna(prev["DIF"]) and
-        pd.notna(last["DIF"]) and
-        prev["DIF"] < 0 and
-        last["DIF"] > 0
+    # 🔥 DIF在 -1 ~ +1
+    cond_dif_range = (
+        -1 < last["DIF"] < 1
     )
 
-    if cond_cross_44ma and cond_macd_red and cond_dif_cross_zero:
+    if cond_cross_44ma and cond_macd_red and cond_dif_range:
         return {
             "股票": "",
             "收盤價": round(float(last["Close"]), 2),
@@ -246,17 +230,17 @@ if st.button("開始選股"):
     progress = st.progress(0)
     results = []
 
-    for i, ticker in enumerate(tickers):
-        df = get_data(ticker)
+    for i, t in enumerate(tickers):
+        df = get_data(t)
 
         if strategy == "策略1：突破股":
-            result = check_strategy1(df)
+            r = check_strategy1(df)
         else:
-            result = check_strategy2(df)
+            r = check_strategy2(df)
 
-        if result:
-            result["股票"] = ticker.replace(".TW", "").replace(".TWO", "")
-            results.append(result)
+        if r:
+            r["股票"] = t.replace(".TW", "").replace(".TWO", "")
+            results.append(r)
 
         progress.progress((i + 1) / len(tickers))
 
@@ -273,4 +257,4 @@ if st.button("開始選股"):
     else:
         st.warning("今天沒有符合條件的股票")
 else:
-    st.info("選好策略後，按下『開始選股』。")
+    st.info("選擇策略後，按下『開始選股』")
