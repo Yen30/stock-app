@@ -15,7 +15,7 @@ st.title("策略選股（全台股）")
 
 strategy = st.selectbox(
     "選擇策略",
-    ["策略1：突破股", "策略2：轉強起漲股"]
+    ["策略1：突破股", "策略2：轉強起漲股", "策略3：箱型突破股"]
 )
 
 
@@ -187,7 +187,6 @@ def check_strategy2(df):
     last = df.iloc[-1]
     ma44_3days_ago = df["MA44"].iloc[-4]
 
-    # 1. 昨天收盤 < 昨天44MA，今天收盤 > 今天44MA
     cond_cross_44ma = (
         pd.notna(prev["MA44"]) and
         pd.notna(last["MA44"]) and
@@ -195,25 +194,21 @@ def check_strategy2(df):
         last["Close"] > last["MA44"]
     )
 
-    # 2. 今天44MA > 3天前44MA
     cond_ma44_turn_up = (
         pd.notna(ma44_3days_ago) and
         last["MA44"] > ma44_3days_ago
     )
 
-    # 3. 收盤價 / 44MA < 1.1
     cond_not_too_far = (
         pd.notna(last["MA44"]) and
         last["Close"] / last["MA44"] < 1.1
     )
 
-    # 4. 今日成交量 > 5日均量
     cond_volume_up = (
         pd.notna(last["VMA5"]) and
         last["Volume張"] > last["VMA5"]
     )
 
-    # 5. DIF 昨天 < 0，今天 DIF > 0
     cond_dif_cross_zero = (
         pd.notna(prev["DIF"]) and
         pd.notna(last["DIF"]) and
@@ -242,6 +237,84 @@ def check_strategy2(df):
     return None
 
 
+# =========================
+# 策略3：箱型突破股
+# =========================
+def check_strategy3(df):
+    if df is None or len(df) < 70:
+        return None
+
+    df = df.copy()
+
+    df["MA25"] = df["Close"].rolling(25).mean()
+    df["MA44"] = df["Close"].rolling(44).mean()
+    df["MA44_3days_ago"] = df["MA44"].shift(3)
+
+    df["Volume張"] = df["Volume"] / 1000
+    df["VMA5"] = df["Volume張"].rolling(5).mean()
+
+    last = df.iloc[-1]
+
+    # 前20日，不含今天
+    prev20_high_close = df["Close"].shift(1).rolling(20).max().iloc[-1]
+    prev20_high_price = df["High"].shift(1).rolling(20).max().iloc[-1]
+    prev20_low_price = df["Low"].shift(1).rolling(20).min().iloc[-1]
+
+    box_range = (prev20_high_price - prev20_low_price) / prev20_low_price
+
+    # 1. 收盤價 > 前20日最高收盤價 * 1.01
+    cond_break_box = (
+        pd.notna(prev20_high_close) and
+        last["Close"] > prev20_high_close * 1.01
+    )
+
+    # 2. 前20日箱型震幅 < 15%
+    cond_box_range = (
+        pd.notna(box_range) and
+        box_range < 0.15
+    )
+
+    # 3. 今日成交量 > 5日均量 * 1.5
+    cond_volume = (
+        pd.notna(last["VMA5"]) and
+        last["Volume張"] > last["VMA5"] * 1.5
+    )
+
+    # 4. 44MA 上揚
+    cond_ma44_up = (
+        pd.notna(last["MA44"]) and
+        pd.notna(last["MA44_3days_ago"]) and
+        last["MA44"] > last["MA44_3days_ago"]
+    )
+
+    # 5. 收盤價 / 25MA < 1.15
+    cond_not_too_far = (
+        pd.notna(last["MA25"]) and
+        last["Close"] / last["MA25"] < 1.15
+    )
+
+    if (
+        cond_break_box and
+        cond_box_range and
+        cond_volume and
+        cond_ma44_up and
+        cond_not_too_far
+    ):
+        return {
+            "股票": "",
+            "收盤價": round(float(last["Close"]), 2),
+            "20日箱頂": round(float(prev20_high_close), 2),
+            "箱型震幅": round(float(box_range), 3),
+            "25日線": round(float(last["MA25"]), 2),
+            "44日線": round(float(last["MA44"]), 2),
+            "25MA乖離": round(float(last["Close"] / last["MA25"]), 2),
+            "成交量(張)": int(last["Volume張"]),
+            "5日均量(張)": int(last["VMA5"]),
+        }
+
+    return None
+
+
 if st.button("開始選股"):
     tickers = get_all_tickers()
 
@@ -255,8 +328,10 @@ if st.button("開始選股"):
 
         if strategy == "策略1：突破股":
             result = check_strategy1(df)
-        else:
+        elif strategy == "策略2：轉強起漲股":
             result = check_strategy2(df)
+        else:
+            result = check_strategy3(df)
 
         if result:
             result["股票"] = ticker.replace(".TW", "").replace(".TWO", "")
