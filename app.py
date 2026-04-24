@@ -18,9 +18,7 @@ strategy = st.selectbox(
     ["策略1：突破股", "策略2：44MA + MACD轉多"]
 )
 
-# =========================
-# 抓台股清單（含產業過濾）
-# =========================
+
 def _fetch_isin_table(str_mode: int) -> pd.DataFrame:
     url = f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={str_mode}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -96,9 +94,6 @@ def get_all_tickers():
     )))
 
 
-# =========================
-# 抓資料
-# =========================
 def get_data(ticker):
     try:
         df = yf.download(
@@ -121,9 +116,6 @@ def get_data(ticker):
         return None
 
 
-# =========================
-# 策略1：突破股
-# =========================
 def check_strategy1(df):
     if df is None or len(df) < 130:
         return None
@@ -169,9 +161,6 @@ def check_strategy1(df):
     return None
 
 
-# =========================
-# 策略2：44MA + MACD轉多（新版）
-# =========================
 def check_strategy2(df):
     if df is None or len(df) < 100:
         return None
@@ -191,26 +180,33 @@ def check_strategy2(df):
     prev = df.iloc[-2]
     last = df.iloc[-1]
 
-    cond_cross_44ma = (
-        prev["Close"] < prev["MA44"] and
-        last["Close"] > last["MA44"]
+    # 策略2條件1：收盤價在44MA上，且收盤價/44MA < 1.2
+    cond_price_near_ma44 = (
+        pd.notna(last["MA44"]) and
+        last["Close"] > last["MA44"] and
+        last["Close"] / last["MA44"] < 1.2
     )
 
+    # 策略2條件2：MACD翻紅
     cond_macd_red = (
+        pd.notna(prev["MACD"]) and
+        pd.notna(last["MACD"]) and
         prev["MACD"] < 0 and
         last["MACD"] > 0
     )
 
-    # 🔥 DIF在 -1 ~ +1
+    # 策略2條件3：DIF在 -1 ~ +1
     cond_dif_range = (
+        pd.notna(last["DIF"]) and
         -1 < last["DIF"] < 1
     )
 
-    if cond_cross_44ma and cond_macd_red and cond_dif_range:
+    if cond_price_near_ma44 and cond_macd_red and cond_dif_range:
         return {
             "股票": "",
             "收盤價": round(float(last["Close"]), 2),
             "44日線": round(float(last["MA44"]), 2),
+            "44MA乖離": round(float(last["Close"] / last["MA44"]), 2),
             "DIF": round(float(last["DIF"]), 2),
             "MACD": round(float(last["MACD"]), 2),
             "成交量(張)": int(last["Volume張"]),
@@ -219,9 +215,6 @@ def check_strategy2(df):
     return None
 
 
-# =========================
-# 主程式
-# =========================
 if st.button("開始選股"):
     tickers = get_all_tickers()
 
