@@ -15,7 +15,7 @@ st.title("策略選股（全台股）")
 
 strategy = st.selectbox(
     "選擇策略",
-    ["策略1：突破股", "策略2：44MA + MACD轉多"]
+    ["策略1：突破股", "策略2：轉強起漲股"]
 )
 
 
@@ -112,10 +112,13 @@ def get_data(ticker):
 
         df.columns = [str(c).title() for c in df.columns]
         return df
-    except:
+    except Exception:
         return None
 
 
+# =========================
+# 策略1：突破股
+# =========================
 def check_strategy1(df):
     if df is None or len(df) < 130:
         return None
@@ -161,6 +164,9 @@ def check_strategy1(df):
     return None
 
 
+# =========================
+# 策略2：轉強起漲股
+# =========================
 def check_strategy2(df):
     if df is None or len(df) < 100:
         return None
@@ -168,6 +174,8 @@ def check_strategy2(df):
     df = df.copy()
 
     df["MA44"] = df["Close"].rolling(44).mean()
+    df["Volume張"] = df["Volume"] / 1000
+    df["VMA5"] = df["Volume張"].rolling(5).mean()
 
     df["EMA12"] = df["Close"].ewm(span=12, adjust=False).mean()
     df["EMA26"] = df["Close"].ewm(span=26, adjust=False).mean()
@@ -175,33 +183,51 @@ def check_strategy2(df):
     df["DEA"] = df["DIF"].ewm(span=9, adjust=False).mean()
     df["MACD"] = df["DIF"] - df["DEA"]
 
-    df["Volume張"] = df["Volume"] / 1000
-
     prev = df.iloc[-2]
     last = df.iloc[-1]
+    ma44_3days_ago = df["MA44"].iloc[-4]
 
-    # 策略2條件1：收盤價在44MA上，且收盤價/44MA < 1.2
-    cond_price_near_ma44 = (
+    # 1. 昨天收盤 < 昨天44MA，今天收盤 > 今天44MA
+    cond_cross_44ma = (
+        pd.notna(prev["MA44"]) and
         pd.notna(last["MA44"]) and
-        last["Close"] > last["MA44"] and
-        last["Close"] / last["MA44"] < 1.2
+        prev["Close"] < prev["MA44"] and
+        last["Close"] > last["MA44"]
     )
 
-    # 策略2條件2：MACD翻紅
-    cond_macd_red = (
-        pd.notna(prev["MACD"]) and
-        pd.notna(last["MACD"]) and
-        prev["MACD"] < 0 and
-        last["MACD"] > 0
+    # 2. 今天44MA > 3天前44MA
+    cond_ma44_turn_up = (
+        pd.notna(ma44_3days_ago) and
+        last["MA44"] > ma44_3days_ago
     )
 
-    # 策略2條件3：DIF在 -1 ~ +1
-    cond_dif_range = (
+    # 3. 收盤價 / 44MA < 1.1
+    cond_not_too_far = (
+        pd.notna(last["MA44"]) and
+        last["Close"] / last["MA44"] < 1.1
+    )
+
+    # 4. 今日成交量 > 5日均量
+    cond_volume_up = (
+        pd.notna(last["VMA5"]) and
+        last["Volume張"] > last["VMA5"]
+    )
+
+    # 5. DIF 昨天 < 0，今天 DIF > 0
+    cond_dif_cross_zero = (
+        pd.notna(prev["DIF"]) and
         pd.notna(last["DIF"]) and
-        -1 < last["DIF"] < 1
+        prev["DIF"] < 0 and
+        last["DIF"] > 0
     )
 
-    if cond_price_near_ma44 and cond_macd_red and cond_dif_range:
+    if (
+        cond_cross_44ma and
+        cond_ma44_turn_up and
+        cond_not_too_far and
+        cond_volume_up and
+        cond_dif_cross_zero
+    ):
         return {
             "股票": "",
             "收盤價": round(float(last["Close"]), 2),
@@ -210,6 +236,7 @@ def check_strategy2(df):
             "DIF": round(float(last["DIF"]), 2),
             "MACD": round(float(last["MACD"]), 2),
             "成交量(張)": int(last["Volume張"]),
+            "5日均量(張)": int(last["VMA5"]),
         }
 
     return None
@@ -223,17 +250,17 @@ if st.button("開始選股"):
     progress = st.progress(0)
     results = []
 
-    for i, t in enumerate(tickers):
-        df = get_data(t)
+    for i, ticker in enumerate(tickers):
+        df = get_data(ticker)
 
         if strategy == "策略1：突破股":
-            r = check_strategy1(df)
+            result = check_strategy1(df)
         else:
-            r = check_strategy2(df)
+            result = check_strategy2(df)
 
-        if r:
-            r["股票"] = t.replace(".TW", "").replace(".TWO", "")
-            results.append(r)
+        if result:
+            result["股票"] = ticker.replace(".TW", "").replace(".TWO", "")
+            results.append(result)
 
         progress.progress((i + 1) / len(tickers))
 
