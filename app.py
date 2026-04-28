@@ -10,7 +10,6 @@ import yfinance as yf
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
-
 st.title("策略選股（全台股）")
 
 strategy = st.selectbox(
@@ -125,6 +124,7 @@ def check_strategy1(df):
 
     df = df.copy()
 
+    df["MA5"] = df["Close"].rolling(5).mean()
     df["MA25"] = df["Close"].rolling(25).mean()
     df["MA44"] = df["Close"].rolling(44).mean()
     df["MA44_prev"] = df["MA44"].shift(1)
@@ -135,13 +135,16 @@ def check_strategy1(df):
 
     last = df.iloc[-1]
 
+    prev60_high_close = df["Close"].shift(1).rolling(60).max().iloc[-1]
+
     cond_price = last["Close"] > last["MA44"]
     cond_ma_up = last["MA44"] > last["MA44_prev"]
     cond_ma_structure = last["MA25"] > last["MA44"]
     cond_volume = last["VMA5"] > last["VMA120"]
     cond_liquidity = last["Volume張"] > 5000
-    cond_break = last["Close"] >= df["Close"].rolling(20).max().iloc[-2] * 1.02
-    cond_not_too_far = last["Close"] / last["MA25"] < 1.2
+    cond_break = last["Close"] > prev60_high_close
+    cond_not_too_far = last["Close"] / last["MA25"] < 1.12
+    cond_above_ma5 = last["Close"] > last["MA5"]
 
     if (
         cond_price and
@@ -150,14 +153,17 @@ def check_strategy1(df):
         cond_volume and
         cond_liquidity and
         cond_break and
-        cond_not_too_far
+        cond_not_too_far and
+        cond_above_ma5
     ):
         return {
             "股票": "",
             "收盤價": round(float(last["Close"]), 2),
+            "5日線": round(float(last["MA5"]), 2),
             "25日線": round(float(last["MA25"]), 2),
             "44日線": round(float(last["MA44"]), 2),
-            "乖離": round(float(last["Close"] / last["MA25"]), 2),
+            "25MA乖離": round(float(last["Close"] / last["MA25"]), 2),
+            "60日高點": round(float(prev60_high_close), 2),
             "成交量(張)": int(last["Volume張"]),
         }
 
@@ -185,7 +191,7 @@ def check_strategy2(df):
 
     prev = df.iloc[-2]
     last = df.iloc[-1]
-    ma44_3days_ago = df["MA44"].iloc[-4]
+    ma44_5days_ago = df["MA44"].iloc[-6]
 
     cond_cross_44ma = (
         pd.notna(prev["MA44"]) and
@@ -195,8 +201,8 @@ def check_strategy2(df):
     )
 
     cond_ma44_turn_up = (
-        pd.notna(ma44_3days_ago) and
-        last["MA44"] > ma44_3days_ago
+        pd.notna(ma44_5days_ago) and
+        last["MA44"] > ma44_5days_ago
     )
 
     cond_not_too_far = (
@@ -206,7 +212,8 @@ def check_strategy2(df):
 
     cond_volume_up = (
         pd.notna(last["VMA5"]) and
-        last["Volume張"] > last["VMA5"]
+        last["Volume張"] > last["VMA5"] and
+        last["Volume張"] > prev["Volume張"] * 1.5
     )
 
     cond_dif_cross_zero = (
@@ -254,40 +261,42 @@ def check_strategy3(df):
     df["VMA5"] = df["Volume張"].rolling(5).mean()
 
     last = df.iloc[-1]
+    prev = df.iloc[-2]
+    prev2 = df.iloc[-3]
 
-    # 前20日，不含今天
     prev20_high_close = df["Close"].shift(1).rolling(20).max().iloc[-1]
     prev20_high_price = df["High"].shift(1).rolling(20).max().iloc[-1]
     prev20_low_price = df["Low"].shift(1).rolling(20).min().iloc[-1]
 
     box_range = (prev20_high_price - prev20_low_price) / prev20_low_price
 
-    # 1. 收盤價 > 前20日最高收盤價 * 1.01
     cond_break_box = (
         pd.notna(prev20_high_close) and
-        last["Close"] > prev20_high_close * 1.01
+        last["Close"] > prev20_high_close * 1.03
     )
 
-    # 2. 前20日箱型震幅 < 15%
     cond_box_range = (
         pd.notna(box_range) and
         box_range < 0.15
     )
 
-    # 3. 今日成交量 > 5日均量 * 1.5
-    cond_volume = (
-        pd.notna(last["VMA5"]) and
-        last["Volume張"] > last["VMA5"] * 1.5
+    # 這裡解讀為：突破前一日量縮
+    cond_prev_volume_shrink = (
+        prev["Volume張"] < prev2["Volume張"] * 0.7
     )
 
-    # 4. 44MA 上揚
+    cond_volume_breakout = (
+        pd.notna(last["VMA5"]) and
+        last["Volume張"] > last["VMA5"] * 1.5 and
+        prev["Volume張"] < prev["VMA5"]
+    )
+
     cond_ma44_up = (
         pd.notna(last["MA44"]) and
         pd.notna(last["MA44_3days_ago"]) and
         last["MA44"] > last["MA44_3days_ago"]
     )
 
-    # 5. 收盤價 / 25MA < 1.15
     cond_not_too_far = (
         pd.notna(last["MA25"]) and
         last["Close"] / last["MA25"] < 1.15
@@ -296,7 +305,8 @@ def check_strategy3(df):
     if (
         cond_break_box and
         cond_box_range and
-        cond_volume and
+        cond_prev_volume_shrink and
+        cond_volume_breakout and
         cond_ma44_up and
         cond_not_too_far
     ):
