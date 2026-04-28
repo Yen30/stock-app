@@ -10,356 +10,163 @@ import yfinance as yf
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 st.set_page_config(page_title="策略選股", page_icon="📈", layout="centered")
-st.title("策略選股（全台股）")
-
-strategy = st.selectbox(
-    "選擇策略",
-    ["策略1：突破股", "策略2：轉強起漲股", "策略3：箱型突破股"]
-)
+st.title("策略選股（強度排名版🔥）")
 
 
-def _fetch_isin_table(str_mode: int) -> pd.DataFrame:
+# =========================
+# 股票清單
+# =========================
+def _fetch_isin_table(str_mode: int):
     url = f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={str_mode}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-
-    res = requests.get(url, headers=headers, timeout=20, verify=False)
+    res = requests.get(url, timeout=20, verify=False)
     res.encoding = "big5"
-
-    tables = pd.read_html(StringIO(res.text))
-    if not tables:
-        return pd.DataFrame()
-
-    df = tables[0].copy()
-
-    if len(df) > 0:
-        first_row = df.iloc[0].astype(str).tolist()
-        if any("代號" in x for x in first_row):
-            df.columns = first_row
-            df = df.iloc[1:].copy()
-
-    df.columns = [str(c).strip() for c in df.columns]
-    return df
+    df = pd.read_html(StringIO(res.text))[0]
+    df.columns = df.iloc[0]
+    return df.iloc[1:]
 
 
-def _extract_codes_with_filter(df: pd.DataFrame, suffix: str) -> list[str]:
-    if df.empty:
-        return []
-
-    first_col = df.columns[0]
-
-    industry_col = None
-    for col in df.columns:
-        if "產業" in col:
-            industry_col = col
-            break
-
+def _extract_codes(df, suffix):
     codes = []
-
-    for i, val in enumerate(df[first_col].astype(str)):
-        m = re.match(r"^(\d{4})", val.strip())
-        if not m:
-            continue
-
-        code = m.group(1)
-
-        if industry_col:
-            industry = str(df.iloc[i][industry_col])
-
-            if (
-                "生技" in industry or
-                "醫療" in industry or
-                "建材營造" in industry or
-                "食品" in industry or
-                "ETF" in industry or
-                "金融" in industry or
-                "保險" in industry or
-                "觀光" in industry or
-                "餐飲" in industry
-            ):
-                continue
-
-        codes.append(f"{code}{suffix}")
-
-    return sorted(list(set(codes)))
+    for val in df.iloc[:, 0].astype(str):
+        m = re.match(r"^(\d{4})", val)
+        if m:
+            codes.append(m.group(1) + suffix)
+    return codes
 
 
 @st.cache_data(ttl=3600)
 def get_all_tickers():
-    df1 = _fetch_isin_table(2)
-    df2 = _fetch_isin_table(4)
-    return sorted(list(set(
-        _extract_codes_with_filter(df1, ".TW") +
-        _extract_codes_with_filter(df2, ".TWO")
-    )))
+    return list(set(
+        _extract_codes(_fetch_isin_table(2), ".TW") +
+        _extract_codes(_fetch_isin_table(4), ".TWO")
+    ))
 
 
-def get_data(ticker):
+def get_data(t):
     try:
-        df = yf.download(
-            ticker,
-            period="1y",
-            progress=False,
-            auto_adjust=False,
-            threads=False
-        )
-
-        if df is None or df.empty:
-            return None
-
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [c[0] for c in df.columns]
-
-        df.columns = [str(c).title() for c in df.columns]
-        return df
-    except Exception:
+        df = yf.download(t, period="1y", progress=False)
+        return df if not df.empty else None
+    except:
         return None
 
 
 # =========================
-# 策略1：突破股
+# 三策略（精簡判斷）
 # =========================
-def check_strategy1(df):
-    if df is None or len(df) < 130:
-        return None
-
-    df = df.copy()
-
+def s1(df):
+    if len(df) < 130: return False
     df["MA5"] = df["Close"].rolling(5).mean()
     df["MA25"] = df["Close"].rolling(25).mean()
     df["MA44"] = df["Close"].rolling(44).mean()
-    df["MA44_prev"] = df["MA44"].shift(1)
-
-    df["Volume張"] = df["Volume"] / 1000
-    df["VMA5"] = df["Volume張"].rolling(5).mean()
-    df["VMA120"] = df["Volume張"].rolling(120).mean()
+    df["V"] = df["Volume"]/1000
+    df["V5"] = df["V"].rolling(5).mean()
+    df["V120"] = df["V"].rolling(120).mean()
 
     last = df.iloc[-1]
+    prev60 = df["Close"].shift(1).rolling(60).max().iloc[-1]
 
-    prev60_high_close = df["Close"].shift(1).rolling(60).max().iloc[-1]
-
-    cond_price = last["Close"] > last["MA44"]
-    cond_ma_up = last["MA44"] > last["MA44_prev"]
-    cond_ma_structure = last["MA25"] > last["MA44"]
-    cond_volume = last["VMA5"] > last["VMA120"]
-    cond_liquidity = last["Volume張"] > 5000
-    cond_break = last["Close"] > prev60_high_close
-    cond_not_too_far = last["Close"] / last["MA25"] < 1.12
-    cond_above_ma5 = last["Close"] > last["MA5"]
-
-    if (
-        cond_price and
-        cond_ma_up and
-        cond_ma_structure and
-        cond_volume and
-        cond_liquidity and
-        cond_break and
-        cond_not_too_far and
-        cond_above_ma5
-    ):
-        return {
-            "股票": "",
-            "收盤價": round(float(last["Close"]), 2),
-            "5日線": round(float(last["MA5"]), 2),
-            "25日線": round(float(last["MA25"]), 2),
-            "44日線": round(float(last["MA44"]), 2),
-            "25MA乖離": round(float(last["Close"] / last["MA25"]), 2),
-            "60日高點": round(float(prev60_high_close), 2),
-            "成交量(張)": int(last["Volume張"]),
-        }
-
-    return None
+    return (
+        last["Close"] > last["MA44"] and
+        last["MA44"] > df["MA44"].iloc[-2] and
+        last["MA25"] > last["MA44"] and
+        last["V5"] > last["V120"] and
+        last["V"] > 5000 and
+        last["Close"] > prev60 and
+        last["Close"]/last["MA25"] < 1.12 and
+        last["Close"] > last["MA5"]
+    )
 
 
-# =========================
-# 策略2：轉強起漲股
-# =========================
-def check_strategy2(df):
-    if df is None or len(df) < 100:
-        return None
-
-    df = df.copy()
-
+def s2(df):
+    if len(df) < 100: return False
     df["MA44"] = df["Close"].rolling(44).mean()
-    df["Volume張"] = df["Volume"] / 1000
-    df["VMA5"] = df["Volume張"].rolling(5).mean()
+    df["V"] = df["Volume"]/1000
+    df["V5"] = df["V"].rolling(5).mean()
 
-    df["EMA12"] = df["Close"].ewm(span=12, adjust=False).mean()
-    df["EMA26"] = df["Close"].ewm(span=26, adjust=False).mean()
+    df["EMA12"] = df["Close"].ewm(span=12).mean()
+    df["EMA26"] = df["Close"].ewm(span=26).mean()
     df["DIF"] = df["EMA12"] - df["EMA26"]
-    df["DEA"] = df["DIF"].ewm(span=9, adjust=False).mean()
-    df["MACD"] = df["DIF"] - df["DEA"]
 
     prev = df.iloc[-2]
     last = df.iloc[-1]
-    ma44_5days_ago = df["MA44"].iloc[-6]
 
-    cond_cross_44ma = (
-        pd.notna(prev["MA44"]) and
-        pd.notna(last["MA44"]) and
+    return (
         prev["Close"] < prev["MA44"] and
-        last["Close"] > last["MA44"]
+        last["Close"] > last["MA44"] and
+        last["MA44"] > df["MA44"].iloc[-6] and
+        last["Close"]/last["MA44"] < 1.1 and
+        last["V"] > last["V5"] and
+        last["V"] > prev["V"] and
+        prev["DIF"] < 0 and last["DIF"] > 0
     )
 
-    cond_ma44_turn_up = (
-        pd.notna(ma44_5days_ago) and
-        last["MA44"] > ma44_5days_ago
-    )
 
-    cond_not_too_far = (
-        pd.notna(last["MA44"]) and
-        last["Close"] / last["MA44"] < 1.1
-    )
-
-    cond_volume_up = (
-        pd.notna(last["VMA5"]) and
-        last["Volume張"] > last["VMA5"] and
-        last["Volume張"] > prev["Volume張"] * 1.5
-    )
-
-    cond_dif_cross_zero = (
-        pd.notna(prev["DIF"]) and
-        pd.notna(last["DIF"]) and
-        prev["DIF"] < 0 and
-        last["DIF"] > 0
-    )
-
-    if (
-        cond_cross_44ma and
-        cond_ma44_turn_up and
-        cond_not_too_far and
-        cond_volume_up and
-        cond_dif_cross_zero
-    ):
-        return {
-            "股票": "",
-            "收盤價": round(float(last["Close"]), 2),
-            "44日線": round(float(last["MA44"]), 2),
-            "44MA乖離": round(float(last["Close"] / last["MA44"]), 2),
-            "DIF": round(float(last["DIF"]), 2),
-            "MACD": round(float(last["MACD"]), 2),
-            "成交量(張)": int(last["Volume張"]),
-            "5日均量(張)": int(last["VMA5"]),
-        }
-
-    return None
-
-
-# =========================
-# 策略3：箱型突破股
-# =========================
-def check_strategy3(df):
-    if df is None or len(df) < 70:
-        return None
-
-    df = df.copy()
-
+def s3(df):
+    if len(df) < 70: return False
     df["MA25"] = df["Close"].rolling(25).mean()
     df["MA44"] = df["Close"].rolling(44).mean()
-    df["MA44_3days_ago"] = df["MA44"].shift(3)
-
-    df["Volume張"] = df["Volume"] / 1000
-    df["VMA5"] = df["Volume張"].rolling(5).mean()
+    df["V"] = df["Volume"]/1000
+    df["V5"] = df["V"].rolling(5).mean()
 
     last = df.iloc[-1]
     prev = df.iloc[-2]
-    prev2 = df.iloc[-3]
 
-    prev20_high_close = df["Close"].shift(1).rolling(20).max().iloc[-1]
-    prev20_high_price = df["High"].shift(1).rolling(20).max().iloc[-1]
-    prev20_low_price = df["Low"].shift(1).rolling(20).min().iloc[-1]
+    high20 = df["Close"].shift(1).rolling(20).max().iloc[-1]
+    hi = df["High"].shift(1).rolling(20).max().iloc[-1]
+    lo = df["Low"].shift(1).rolling(20).min().iloc[-1]
 
-    box_range = (prev20_high_price - prev20_low_price) / prev20_low_price
+    box = (hi - lo) / lo
 
-    cond_break_box = (
-        pd.notna(prev20_high_close) and
-        last["Close"] > prev20_high_close * 1.03
+    return (
+        last["Close"] > high20*1.03 and
+        box < 0.15 and
+        last["V"] > last["V5"]*1.5 and
+        prev["V"] < prev["V5"] and
+        last["MA44"] > df["MA44"].iloc[-4] and
+        last["Close"]/last["MA25"] < 1.15
     )
 
-    cond_box_range = (
-        pd.notna(box_range) and
-        box_range < 0.15
-    )
 
-    # 這裡解讀為：突破前一日量縮
-    cond_prev_volume_shrink = (
-        prev["Volume張"] < prev2["Volume張"] * 0.7
-    )
+# =========================
+# 主程式
+# =========================
+if st.button("開始掃描🔥"):
 
-    cond_volume_breakout = (
-        pd.notna(last["VMA5"]) and
-        last["Volume張"] > last["VMA5"] * 1.5 and
-        prev["Volume張"] < prev["VMA5"]
-    )
-
-    cond_ma44_up = (
-        pd.notna(last["MA44"]) and
-        pd.notna(last["MA44_3days_ago"]) and
-        last["MA44"] > last["MA44_3days_ago"]
-    )
-
-    cond_not_too_far = (
-        pd.notna(last["MA25"]) and
-        last["Close"] / last["MA25"] < 1.15
-    )
-
-    if (
-        cond_break_box and
-        cond_box_range and
-        cond_prev_volume_shrink and
-        cond_volume_breakout and
-        cond_ma44_up and
-        cond_not_too_far
-    ):
-        return {
-            "股票": "",
-            "收盤價": round(float(last["Close"]), 2),
-            "20日箱頂": round(float(prev20_high_close), 2),
-            "箱型震幅": round(float(box_range), 3),
-            "25日線": round(float(last["MA25"]), 2),
-            "44日線": round(float(last["MA44"]), 2),
-            "25MA乖離": round(float(last["Close"] / last["MA25"]), 2),
-            "成交量(張)": int(last["Volume張"]),
-            "5日均量(張)": int(last["VMA5"]),
-        }
-
-    return None
-
-
-if st.button("開始選股"):
     tickers = get_all_tickers()
-
-    st.write(f"掃描 {len(tickers)} 檔股票（已排除特定產業）")
-
-    progress = st.progress(0)
     results = []
 
-    for i, ticker in enumerate(tickers):
-        df = get_data(ticker)
+    progress = st.progress(0)
 
-        if strategy == "策略1：突破股":
-            result = check_strategy1(df)
-        elif strategy == "策略2：轉強起漲股":
-            result = check_strategy2(df)
-        else:
-            result = check_strategy3(df)
+    for i, t in enumerate(tickers):
+        df = get_data(t)
+        if df is None: continue
 
-        if result:
-            result["股票"] = ticker.replace(".TW", "").replace(".TWO", "")
-            results.append(result)
+        code = t.replace(".TW","").replace(".TWO","")
 
-        progress.progress((i + 1) / len(tickers))
+        hit1 = s1(df)
+        hit2 = s2(df)
+        hit3 = s3(df)
+
+        score = hit1 + hit2 + hit3
+
+        if score > 0:
+            results.append({
+                "股票": code,
+                "強度": score,
+                "策略1": hit1,
+                "策略2": hit2,
+                "策略3": hit3
+            })
+
+        progress.progress((i+1)/len(tickers))
 
     if results:
         df_result = pd.DataFrame(results)
-
-        if "成交量(張)" in df_result.columns:
-            df_result = df_result.sort_values(by="成交量(張)", ascending=False)
-
-        df_result = df_result.reset_index(drop=True)
+        df_result = df_result.sort_values(by="強度", ascending=False)
 
         st.success(f"找到 {len(df_result)} 檔")
-        st.dataframe(df_result, use_container_width=True, hide_index=True)
+
+        st.dataframe(df_result, use_container_width=True)
+
     else:
-        st.warning("今天沒有符合條件的股票")
-else:
-    st.info("選擇策略後，按下『開始選股』")
+        st.warning("沒有符合條件的股票")
