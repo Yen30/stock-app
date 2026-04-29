@@ -13,6 +13,9 @@ st.set_page_config(page_title="策略選股🔥", page_icon="🔥", layout="cent
 st.title("策略選股（4策略＋強度排名🔥）")
 
 
+# =========================
+# 抓股票清單
+# =========================
 def _fetch_isin_table(str_mode: int):
     url = f"https://isin.twse.com.tw/isin/C_public.jsp?strMode={str_mode}"
     res = requests.get(url, timeout=20, verify=False)
@@ -66,6 +69,9 @@ def get_all_tickers():
     ))
 
 
+# =========================
+# 抓資料（修正yfinance欄位問題）
+# =========================
 def get_data(t):
     try:
         df = yf.download(t, period="1y", progress=False, auto_adjust=False)
@@ -82,6 +88,9 @@ def get_data(t):
         return None
 
 
+# =========================
+# 策略1：主升段
+# =========================
 def s1(df):
     if len(df) < 130:
         return False
@@ -110,6 +119,9 @@ def s1(df):
     )
 
 
+# =========================
+# 策略2：轉強
+# =========================
 def s2(df):
     if len(df) < 100:
         return False
@@ -138,6 +150,9 @@ def s2(df):
     )
 
 
+# =========================
+# 策略3：箱型突破
+# =========================
 def s3(df):
     if len(df) < 70:
         return False
@@ -168,6 +183,9 @@ def s3(df):
     )
 
 
+# =========================
+# 策略4：觀察池（最新版本）
+# =========================
 def s4(df):
     if len(df) < 70:
         return False
@@ -187,15 +205,18 @@ def s4(df):
     last = df.iloc[-1]
 
     return (
+        last["OSC"] < 1 and
         last["OSC"] > prev["OSC"] and
         prev["Close"] < prev["MA44"] and
         last["Close"] > last["MA44"] and
         last["Close"] > prev["Close"] and
-        last["V"] > 3000 and
-        last["DIF"] < 0
+        last["V"] > 3000
     )
 
 
+# =========================
+# 主程式
+# =========================
 if st.button("開始掃描🔥"):
     tickers = get_all_tickers()
     results = []
