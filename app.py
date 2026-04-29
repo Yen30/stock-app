@@ -24,8 +24,8 @@ def _fetch_isin_table(str_mode: int):
 
 def _extract_codes(df, suffix):
     codes = []
-
     industry_col = None
+
     for col in df.columns:
         if "產業" in str(col):
             industry_col = col
@@ -173,7 +173,6 @@ def s4(df):
         return False
 
     df = df.copy()
-    df["MA5"] = df["Close"].rolling(5).mean()
     df["MA44"] = df["Close"].rolling(44).mean()
 
     df["V"] = df["Volume"] / 1000
@@ -188,12 +187,12 @@ def s4(df):
     last = df.iloc[-1]
 
     return (
-        prev["OSC"] < 0 and
-        last["OSC"] > 0 and
-        last["MA5"] > last["MA44"] and
+        last["OSC"] > prev["OSC"] and
+        prev["Close"] < prev["MA44"] and
         last["Close"] > last["MA44"] and
         last["Close"] > prev["Close"] and
-        last["V"] > 5000
+        last["V"] > 3000 and
+        last["DIF"] < 0
     )
 
 
@@ -205,6 +204,7 @@ if st.button("開始掃描🔥"):
 
     for i, t in enumerate(tickers):
         df = get_data(t)
+
         if df is None:
             progress.progress((i + 1) / len(tickers))
             continue
@@ -238,3 +238,5 @@ if st.button("開始掃描🔥"):
         st.dataframe(df_result, use_container_width=True, hide_index=True)
     else:
         st.warning("沒有符合條件的股票")
+else:
+    st.info("按下『開始掃描🔥』後開始選股")
