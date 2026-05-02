@@ -262,10 +262,12 @@ def s5(df):
         pd.notna(last["V5"]) and
         pd.notna(last["MA22"]) and
         pd.notna(last["OSC"]) and
+        pd.notna(prev["OSC"]) and
         last["V"] < last["V5"] and
         last["Close"] > prev["Close"] and
         last["Close"] > last["MA22"] and
-        abs(last["OSC"]) < 1
+        abs(last["OSC"]) < 1 and
+        last["OSC"] > prev["OSC"]
     )
 
 
