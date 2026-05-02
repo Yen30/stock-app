@@ -3,7 +3,7 @@ import streamlit as st
 import yfinance as yf
 
 st.set_page_config(page_title="策略選股🔥", page_icon="🔥", layout="centered")
-st.title("策略選股（4策略＋強度排名🔥）")
+st.title("策略選股（5策略＋強度排名🔥）")
 
 
 # =========================
@@ -55,27 +55,24 @@ def get_all_tickers():
         "3406.TW","3413.TW","3443.TW","3450.TW","3481.TW",
         "3532.TW","3533.TW","3535.TW","3545.TW","3550.TW",
         "3563.TW","3576.TW","3592.TW","3653.TW","3661.TW",
-        "3673.TW","3682.TW","3702.TW","3706.TW","3711.TW",
-        "3715.TW","4915.TW","4919.TW","4938.TW","4958.TW",
-        "4961.TW","4966.TW","4994.TW","5269.TW","5434.TW",
-        "5469.TWO","5483.TWO","5608.TW","6116.TW","6121.TWO",
-        "6139.TW","6153.TW","6176.TW","6183.TW","6213.TW",
-        "6239.TW","6257.TW","6271.TW","6274.TW","6285.TW",
-        "6415.TW","6438.TW","6443.TW","6472.TW","6515.TW",
-        "6531.TW","6533.TW","6669.TW","6691.TW","6719.TW",
-        "6781.TW","6805.TW","8016.TW","8046.TW","8112.TW",
-        "8150.TW","8210.TW","8215.TW","8249.TW","8261.TW",
-        "8299.TW","8358.TW","8996.TW","9904.TW","9910.TW",
-        "9914.TW","9921.TW","9941.TW","9958.TW",
+        "3673.TW","3682.TW","3702.TW","3706.TW","3707.TW",
+        "3711.TW","3715.TW","4915.TW","4919.TW","4938.TW",
+        "4958.TW","4961.TW","4966.TW","4994.TW","5269.TW",
+        "5434.TW","5469.TWO","5483.TWO","5608.TW","6116.TW",
+        "6121.TWO","6139.TW","6153.TW","6176.TW","6183.TW",
+        "6213.TW","6239.TW","6257.TW","6271.TW","6274.TW",
+        "6285.TW","6415.TW","6438.TW","6443.TW","6472.TW",
+        "6515.TW","6531.TW","6533.TW","6669.TW","6691.TW",
+        "6719.TW","6781.TW","6805.TW","8016.TW","8046.TW",
+        "8112.TW","8150.TW","8210.TW","8215.TW","8249.TW",
+        "8261.TW","8299.TW","8358.TW","8996.TW","9904.TW",
+        "9910.TW","9914.TW","9921.TW","9941.TW","9958.TW",
         "2603.TW","2605.TW","2606.TW","2609.TW","2610.TW",
         "2615.TW","2618.TW","2630.TW","2633.TW","2634.TW",
         "2636.TW","2637.TW","2645.TW","2646.TW",
     ]
 
 
-# =========================
-# 抓資料
-# =========================
 def get_data(ticker):
     try:
         df = yf.download(
@@ -99,9 +96,6 @@ def get_data(ticker):
         return None
 
 
-# =========================
-# 策略1：主升段
-# =========================
 def s1(df):
     if df is None or len(df) < 130:
         return False
@@ -130,9 +124,6 @@ def s1(df):
     )
 
 
-# =========================
-# 策略2：轉強起漲
-# =========================
 def s2(df):
     if df is None or len(df) < 100:
         return False
@@ -161,9 +152,6 @@ def s2(df):
     )
 
 
-# =========================
-# 策略3：箱型突破
-# =========================
 def s3(df):
     if df is None or len(df) < 70:
         return False
@@ -194,9 +182,6 @@ def s3(df):
     )
 
 
-# =========================
-# 策略4：觀察池
-# =========================
 def s4(df):
     if df is None or len(df) < 70:
         return False
@@ -225,9 +210,37 @@ def s4(df):
     )
 
 
-# =========================
-# 主程式
-# =========================
+def s5(df):
+    if df is None or len(df) < 120:
+        return False
+
+    df = df.copy()
+
+    df_w = df.resample("W").agg({
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum"
+    }).dropna()
+
+    if len(df_w) < 25:
+        return False
+
+    df_w["V"] = df_w["Volume"] / 1000
+    df_w["V5"] = df_w["V"].rolling(5).mean()
+    df_w["MA22"] = df_w["Close"].rolling(22).mean()
+
+    prev = df_w.iloc[-2]
+    last = df_w.iloc[-1]
+
+    return (
+        last["V"] < last["V5"] and
+        last["Close"] > prev["Close"] and
+        last["Close"] > last["MA22"]
+    )
+
+
 if st.button("開始掃描🔥"):
     tickers = get_all_tickers()
     results = []
@@ -247,8 +260,9 @@ if st.button("開始掃描🔥"):
         hit2 = s2(df)
         hit3 = s3(df)
         hit4 = s4(df)
+        hit5 = s5(df)
 
-        score = int(hit1) + int(hit2) + int(hit3) + int(hit4)
+        score = int(hit1) + int(hit2) + int(hit3) + int(hit4) + int(hit5)
 
         if score > 0:
             results.append({
@@ -258,6 +272,7 @@ if st.button("開始掃描🔥"):
                 "策略2": "✅" if hit2 else "",
                 "策略3": "✅" if hit3 else "",
                 "策略4": "👀" if hit4 else "",
+                "策略5週K": "🌀" if hit5 else "",
             })
 
         progress.progress((i + 1) / len(tickers))
